@@ -1,0 +1,36 @@
+name: Build MinimalOS
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  build:
+    runs-on: ubuntu-latest # This will use an Ubuntu-based environment for building.
+
+    steps:
+      # Step 1: Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      # Step 2: Set up cross-compiler and dependencies
+      - name: Set up cross-compiler
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev texinfo
+          # If you need to set up your cross-compiler, you can add that here. For example:
+          # sudo apt-get install -y i386-elf-gcc
+
+      # Step 3: Build MinimalOS
+      - name: Build MinimalOS
+        run: |
+          cd Minimal-os-master  # Change to your project folder
+          make  # Run the make command to compile the OS
+
+      # Step 4: Upload output artifact
+      - name: Upload output
+        uses: actions/upload-artifact@v2
+        with:
+          name: minimal-os-master-image
+          path: Minimal-os-master/minimal-os-master.img # Change this path if your image is generated elsewhere
