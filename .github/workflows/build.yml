@@ -21,12 +21,28 @@ jobs:
 
       - name: Set up cross-compiler
         run: |
+          # Download and install i686-elf cross compiler
           wget https://github.com/lordmilko/i686-elf-tools/releases/download/7.1.0/i686-elf-tools-linux.zip
           unzip i686-elf-tools-linux.zip
+
+          # Add to PATH and create symlink for i386-elf-gcc
+          export PATH=$PATH:$PWD/i686-elf-tools-linux/bin
           echo "$PWD/i686-elf-tools-linux/bin" >> $GITHUB_PATH
+
+          # Create symlinks for i386-elf-* tools pointing to i686-elf-* tools
+          sudo mkdir -p /usr/local/bin
+          for tool in gcc ld objcopy objdump; do
+            sudo ln -sf $PWD/i686-elf-tools-linux/bin/i686-elf-$tool /usr/local/bin/i386-elf-$tool
+          done
+
+          # Verify the symlinks are working
+          ls -la /usr/local/bin/i386-elf-*
+          which i386-elf-gcc || echo "i386-elf-gcc not found in path"
 
       - name: Build MinimalOS
         run: |
+          # Display environment for debugging
+          echo "PATH=$PATH"
           make
           make usb
 
