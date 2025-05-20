@@ -1,7 +1,8 @@
 all : buildsubdirs os-image.bin
 
-CC = i386-elf-gcc
-LD = i386-elf-ld
+# Change these lines to use i686-elf instead of i386-elf
+CC = i686-elf-gcc
+LD = i686-elf-ld
 
 CFLAGS = -g -ffreestanding -Wall -Wextra -m32
 
