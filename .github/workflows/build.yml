@@ -19,30 +19,37 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev texinfo libisl-dev nasm gcc make
 
+      - name: Modify Makefile to use i686-elf-gcc
+        run: |
+          # Replace i386-elf with i686-elf in all Makefiles
+          find . -name "Makefile" -type f -exec sed -i 's/i386-elf-/i686-elf-/g' {} \;
+          # Show the changes
+          grep -r "i686-elf" --include="Makefile" .
+
       - name: Set up cross-compiler
         run: |
-          # Download and install i686-elf cross compiler
+          # Download and install cross compiler
           wget https://github.com/lordmilko/i686-elf-tools/releases/download/7.1.0/i686-elf-tools-linux.zip
           unzip i686-elf-tools-linux.zip
 
-          # Add to PATH and create symlink for i386-elf-gcc
-          export PATH=$PATH:$PWD/i686-elf-tools-linux/bin
+          # Add to PATH
           echo "$PWD/i686-elf-tools-linux/bin" >> $GITHUB_PATH
+          export PATH=$PATH:$PWD/i686-elf-tools-linux/bin
 
-          # Create symlinks for i386-elf-* tools pointing to i686-elf-* tools
-          sudo mkdir -p /usr/local/bin
-          for tool in gcc ld objcopy objdump; do
-            sudo ln -sf $PWD/i686-elf-tools-linux/bin/i686-elf-$tool /usr/local/bin/i386-elf-$tool
-          done
-
-          # Verify the symlinks are working
-          ls -la /usr/local/bin/i386-elf-*
-          which i386-elf-gcc || echo "i386-elf-gcc not found in path"
+          # Verify installation
+          ls -la $PWD/i686-elf-tools-linux/bin
+          i686-elf-gcc --version || echo "i686-elf-gcc not found"
 
       - name: Build MinimalOS
         run: |
-          # Display environment for debugging
+          # Print PATH for debugging
           echo "PATH=$PATH"
+          # List tools in i686 directory
+          ls -la $PWD/i686-elf-tools-linux/bin/
+          # Try to find gcc
+          which i686-elf-gcc || echo "i686-elf-gcc not in PATH"
+          # Build with environment variables explicitly set
+          export PATH=$PATH:$PWD/i686-elf-tools-linux/bin
           make
           make usb
 
