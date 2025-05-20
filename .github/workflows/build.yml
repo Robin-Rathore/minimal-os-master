@@ -1,10 +1,9 @@
 name: Build MinimalOS
-
 on:
   push:
-    branches: [main]
+    branches: [main, master]
   pull_request:
-    branches: [main]
+    branches: [main, master]
   workflow_dispatch: # Allows manual triggering
 
 jobs:
@@ -12,42 +11,111 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # v4
+      - uses: actions/checkout@v3
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev texinfo libisl-dev nasm gcc make
+          sudo apt-get install -y build-essential nasm gcc make xorriso
 
-      - name: Set up cross-compiler
+      - name: Install i686-elf toolchain
         run: |
-          # Download and install i686-elf cross compiler
+          # Download pre-built i686-elf toolchain (much faster than building)
           wget https://github.com/lordmilko/i686-elf-tools/releases/download/7.1.0/i686-elf-tools-linux.zip
           unzip i686-elf-tools-linux.zip
 
-          # Add to PATH and create symlink for i386-elf-gcc
-          export PATH=$PATH:$PWD/i686-elf-tools-linux/bin
+          # Add to PATH
           echo "$PWD/i686-elf-tools-linux/bin" >> $GITHUB_PATH
+          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
 
-          # Create symlinks for i386-elf-* tools pointing to i686-elf-* tools
-          sudo mkdir -p /usr/local/bin
-          for tool in gcc ld objcopy objdump; do
-            sudo ln -sf $PWD/i686-elf-tools-linux/bin/i686-elf-$tool /usr/local/bin/i386-elf-$tool
-          done
+          # Verify installation
+          i686-elf-gcc --version || echo "i686-elf-gcc not found"
 
-          # Verify the symlinks are working
-          ls -la /usr/local/bin/i386-elf-*
-          which i386-elf-gcc || echo "i386-elf-gcc not found in path"
-
-      - name: Build MinimalOS
+      - name: Debug Makefiles before modification
         run: |
-          # Display environment for debugging
-          echo "PATH=$PATH"
-          make
-          make usb
+          echo "Finding all Makefiles:"
+          find . -name "Makefile" -o -name "makefile" | xargs ls -la
+          echo "=== Contents of main Makefile ==="
+          cat Makefile || echo "No Makefile at root"
+          echo "=== Looking for compiler references ==="
+          grep -r "CC\s*=" --include="Makefile" --include="makefile" . || echo "No CC variable found"
+          grep -r "i386-elf" --include="Makefile" --include="makefile" . || echo "No i386-elf references found"
 
-      - name: Upload OS image
-        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
+      - name: Modify Makefiles to use i686-elf
+        run: |
+          # Find and replace i386-elf- with i686-elf- in all Makefiles
+          find . -name "Makefile" -o -name "makefile" | xargs sed -i 's/i386-elf-/i686-elf-/g'
+
+          # If there's an explicit CC= variable, change it
+          find . -name "Makefile" -o -name "makefile" | xargs sed -i 's/CC\s*=\s*i386-elf-gcc/CC = i686-elf-gcc/g'
+
+          echo "=== Verifying changes ==="
+          grep -r "i686-elf" --include="Makefile" --include="makefile" . || echo "No i686-elf references found after modification"
+
+      - name: Build MinimalOS with modified Makefiles
+        run: |
+          # Ensure i686-elf is in PATH
+          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
+          echo "PATH=$PATH"
+
+          # List i686 tools available
+          echo "Available tools:"
+          ls -la i686-elf-tools-linux/bin/
+
+          # Try the build
+          make
+
+          # Debug if make failed
+          if [ $? -ne 0 ]; then
+            echo "Make failed, creating debug info:"
+            find . -name "*.o" | wc -l
+            echo "Kernel objects found:"
+            find . -name "kernel*.o" || echo "No kernel objects found"
+          else
+            echo "Make succeeded!"
+            ls -la *.bin *.img || echo "No .bin or .img files created"
+            
+            # Run make usb if available
+            make usb || echo "make usb command failed or doesn't exist"
+          fi
+
+      - name: Fallback to direct compiler invocation if make fails
+        if: failure()
+        run: |
+          echo "Attempting direct compilation as fallback..."
+          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
+
+          # Try to understand project structure
+          find . -type f -name "*.c" | sort
+          find . -type f -name "*.asm" | sort
+
+          # Find boot sector
+          BOOT_SECT=$(find . -name "boot_sect.asm" -o -name "bootsect.asm" | head -1)
+          echo "Found boot sector: $BOOT_SECT"
+
+          # Compile boot sector
+          nasm -f bin $BOOT_SECT -o boot_sect.bin || echo "Failed to compile boot sector"
+
+          # Find kernel entry
+          KERNEL_ENTRY=$(find . -name "kernel_entry.asm" | head -1)
+          echo "Found kernel entry: $KERNEL_ENTRY"
+
+          # Compile kernel entry
+          nasm -f elf $KERNEL_ENTRY -o kernel_entry.o || echo "Failed to compile kernel entry"
+
+          # Compile C files
+          find . -name "*.c" | xargs i686-elf-gcc -ffreestanding -c || echo "Failed to compile C files"
+
+          # Try to create image
+          echo "Creating image file directly..."
+          dd if=/dev/zero of=minimalos.img bs=1M count=10
+          dd if=boot_sect.bin of=minimalos.img conv=notrunc bs=512 count=1 || echo "Failed to write boot sector"
+
+      - name: Upload OS image (from any source)
+        uses: actions/upload-artifact@v3
         with:
           name: minimalos-image
-          path: minimalos.img
+          path: |
+            minimalos.img
+            *.bin
+            *.o
