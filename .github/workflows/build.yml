@@ -16,7 +16,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm gcc make xorriso
+          sudo apt-get install -y build-essential nasm gcc make xorriso dosfstools mtools
 
       - name: Install i686-elf toolchain
         run: |
@@ -28,8 +28,16 @@ jobs:
           echo "$PWD/i686-elf-tools-linux/bin" >> $GITHUB_PATH
           export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
 
+          # Create symbolic links for i386-elf tools
+          mkdir -p $HOME/bin
+          ln -s $PWD/i686-elf-tools-linux/bin/i686-elf-gcc $HOME/bin/i386-elf-gcc
+          ln -s $PWD/i686-elf-tools-linux/bin/i686-elf-ld $HOME/bin/i386-elf-ld
+          echo "$HOME/bin" >> $GITHUB_PATH
+          export PATH="$PATH:$HOME/bin"
+
           # Verify installation
           i686-elf-gcc --version || echo "i686-elf-gcc not found"
+          i386-elf-gcc --version || echo "i386-elf-gcc not found"
 
       - name: Debug Makefiles before modification
         run: |
@@ -55,12 +63,13 @@ jobs:
       - name: Build MinimalOS with modified Makefiles
         run: |
           # Ensure i686-elf is in PATH
-          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
+          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin:$HOME/bin"
           echo "PATH=$PATH"
 
           # List i686 tools available
           echo "Available tools:"
           ls -la i686-elf-tools-linux/bin/
+          ls -la $HOME/bin/
 
           # Try the build
           make
@@ -75,15 +84,20 @@ jobs:
             echo "Make succeeded!"
             ls -la *.bin *.img || echo "No .bin or .img files created"
             
-            # Run make usb if available
-            make usb || echo "make usb command failed or doesn't exist"
+            # Create USB image if not already created
+            if [ ! -f minimalos.img ]; then
+              echo "Creating USB image..."
+              dd if=/dev/zero of=minimalos.img bs=1M count=10
+              mkfs.fat -F12 minimalos.img
+              dd if=os-image.bin of=minimalos.img conv=notrunc
+            fi
           fi
 
       - name: Fallback to direct compiler invocation if make fails
         if: failure()
         run: |
           echo "Attempting direct compilation as fallback..."
-          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
+          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin:$HOME/bin"
 
           # Try to understand project structure
           find . -type f -name "*.c" | sort
@@ -109,6 +123,7 @@ jobs:
           # Try to create image
           echo "Creating image file directly..."
           dd if=/dev/zero of=minimalos.img bs=1M count=10
+          mkfs.fat -F12 minimalos.img
           dd if=boot_sect.bin of=minimalos.img conv=notrunc bs=512 count=1 || echo "Failed to write boot sector"
 
       - name: Upload OS image (from any source)
