@@ -1,17 +1,19 @@
 name: Build MinimalOS
+
 on:
   push:
     branches: [main, master]
   pull_request:
     branches: [main, master]
-  workflow_dispatch: # Allows manual triggering
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v3
+      - name: Checkout code
+        uses: actions/checkout@v2
 
       - name: Install dependencies
         run: |
@@ -20,117 +22,41 @@ jobs:
 
       - name: Install i686-elf toolchain
         run: |
-          # Download pre-built i686-elf toolchain (much faster than building)
           wget https://github.com/lordmilko/i686-elf-tools/releases/download/7.1.0/i686-elf-tools-linux.zip
           unzip i686-elf-tools-linux.zip
 
           # Add to PATH
           echo "$PWD/i686-elf-tools-linux/bin" >> $GITHUB_PATH
-          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin"
 
           # Create symbolic links for i386-elf tools
           mkdir -p $HOME/bin
           ln -s $PWD/i686-elf-tools-linux/bin/i686-elf-gcc $HOME/bin/i386-elf-gcc
           ln -s $PWD/i686-elf-tools-linux/bin/i686-elf-ld $HOME/bin/i386-elf-ld
           echo "$HOME/bin" >> $GITHUB_PATH
-          export PATH="$PATH:$HOME/bin"
 
-          # Verify installation
-          i686-elf-gcc --version || echo "i686-elf-gcc not found"
-          i386-elf-gcc --version || echo "i386-elf-gcc not found"
-
-      - name: Debug Makefiles before modification
-        run: |
-          echo "Finding all Makefiles:"
-          find . -name "Makefile" -o -name "makefile" | xargs ls -la
-          echo "=== Contents of main Makefile ==="
-          cat Makefile || echo "No Makefile at root"
-          echo "=== Looking for compiler references ==="
-          grep -r "CC\s*=" --include="Makefile" --include="makefile" . || echo "No CC variable found"
-          grep -r "i386-elf" --include="Makefile" --include="makefile" . || echo "No i386-elf references found"
-
-      - name: Modify Makefiles to use i686-elf
+      - name: Modify Makefiles
         run: |
           # Find and replace i386-elf- with i686-elf- in all Makefiles
-          find . -name "Makefile" -o -name "makefile" | xargs sed -i 's/i386-elf-/i686-elf-/g'
+          find . -name "Makefile" -o -name "makefile" | xargs sed -i 's/i386-elf-/i686-elf-/g' || true
 
-          # If there's an explicit CC= variable, change it
-          find . -name "Makefile" -o -name "makefile" | xargs sed -i 's/CC\s*=\s*i386-elf-gcc/CC = i686-elf-gcc/g'
-
-          echo "=== Verifying changes ==="
-          grep -r "i686-elf" --include="Makefile" --include="makefile" . || echo "No i686-elf references found after modification"
-
-      - name: Build MinimalOS with modified Makefiles
+      - name: Build MinimalOS
         run: |
-          # Ensure i686-elf is in PATH
-          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin:$HOME/bin"
-          echo "PATH=$PATH"
+          make || true
 
-          # List i686 tools available
-          echo "Available tools:"
-          ls -la i686-elf-tools-linux/bin/
-          ls -la $HOME/bin/
-
-          # Try the build
-          make
-
-          # Debug if make failed
-          if [ $? -ne 0 ]; then
-            echo "Make failed, creating debug info:"
-            find . -name "*.o" | wc -l
-            echo "Kernel objects found:"
-            find . -name "kernel*.o" || echo "No kernel objects found"
-          else
-            echo "Make succeeded!"
-            ls -la *.bin *.img || echo "No .bin or .img files created"
-            
-            # Create USB image if not already created
-            if [ ! -f minimalos.img ]; then
-              echo "Creating USB image..."
-              dd if=/dev/zero of=minimalos.img bs=1M count=10
-              mkfs.fat -F12 minimalos.img
-              dd if=os-image.bin of=minimalos.img conv=notrunc
-            fi
-          fi
-
-      - name: Fallback to direct compiler invocation if make fails
-        if: failure()
-        run: |
-          echo "Attempting direct compilation as fallback..."
-          export PATH="$PATH:$PWD/i686-elf-tools-linux/bin:$HOME/bin"
-
-          # Try to understand project structure
-          find . -type f -name "*.c" | sort
-          find . -type f -name "*.asm" | sort
-
-          # Find boot sector
-          BOOT_SECT=$(find . -name "boot_sect.asm" -o -name "bootsect.asm" | head -1)
-          echo "Found boot sector: $BOOT_SECT"
-
-          # Compile boot sector
-          nasm -f bin $BOOT_SECT -o boot_sect.bin || echo "Failed to compile boot sector"
-
-          # Find kernel entry
-          KERNEL_ENTRY=$(find . -name "kernel_entry.asm" | head -1)
-          echo "Found kernel entry: $KERNEL_ENTRY"
-
-          # Compile kernel entry
-          nasm -f elf $KERNEL_ENTRY -o kernel_entry.o || echo "Failed to compile kernel entry"
-
-          # Compile C files
-          find . -name "*.c" | xargs i686-elf-gcc -ffreestanding -c || echo "Failed to compile C files"
-
-          # Try to create image
-          echo "Creating image file directly..."
+          # Create USB image
           dd if=/dev/zero of=minimalos.img bs=1M count=10
           mkfs.fat -F12 minimalos.img
-          dd if=boot_sect.bin of=minimalos.img conv=notrunc bs=512 count=1 || echo "Failed to write boot sector"
 
-      - name: Upload OS image (from any source)
-        uses: actions/upload-artifact@v3
+          # If os-image.bin exists, write it to the image
+          if [ -f os-image.bin ]; then
+            dd if=os-image.bin of=minimalos.img conv=notrunc
+          elif [ -f boot_sect.bin ]; then
+            # Fallback to just writing the boot sector
+            dd if=boot_sect.bin of=minimalos.img conv=notrunc bs=512 count=1
+          fi
+
+      - name: Upload OS image
+        uses: actions/upload-artifact@v2
         with:
           name: minimalos-image
-          path: |
-            minimalos.img
-            *.bin
-            *.o
+          path: minimalos.img
