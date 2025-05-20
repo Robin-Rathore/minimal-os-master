@@ -2,61 +2,52 @@ name: Build MinimalOS
 
 on:
   push:
-    branches: [main, master]
+    branches: [main]
   pull_request:
-    branches: [main, master]
-  workflow_dispatch:
+    branches: [main]
+  workflow_dispatch: # Allows manual triggering
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
+      - uses: actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608 # v4
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential nasm gcc make xorriso dosfstools mtools
+          sudo apt-get install -y build-essential bison flex libgmp3-dev libmpc-dev libmpfr-dev texinfo libisl-dev nasm gcc make
 
-      - name: Install i686-elf toolchain
+      - name: Set up cross-compiler
         run: |
+          # Download and install i686-elf cross compiler
           wget https://github.com/lordmilko/i686-elf-tools/releases/download/7.1.0/i686-elf-tools-linux.zip
           unzip i686-elf-tools-linux.zip
 
-          # Add to PATH
+          # Add to PATH and create symlink for i386-elf-gcc
+          export PATH=$PATH:$PWD/i686-elf-tools-linux/bin
           echo "$PWD/i686-elf-tools-linux/bin" >> $GITHUB_PATH
 
-          # Create symbolic links for i386-elf tools
-          mkdir -p $HOME/bin
-          ln -s $PWD/i686-elf-tools-linux/bin/i686-elf-gcc $HOME/bin/i386-elf-gcc
-          ln -s $PWD/i686-elf-tools-linux/bin/i686-elf-ld $HOME/bin/i386-elf-ld
-          echo "$HOME/bin" >> $GITHUB_PATH
+          # Create symlinks for i386-elf-* tools pointing to i686-elf-* tools
+          sudo mkdir -p /usr/local/bin
+          for tool in gcc ld objcopy objdump; do
+            sudo ln -sf $PWD/i686-elf-tools-linux/bin/i686-elf-$tool /usr/local/bin/i386-elf-$tool
+          done
 
-      - name: Modify Makefiles
-        run: |
-          # Find and replace i386-elf- with i686-elf- in all Makefiles
-          find . -name "Makefile" -o -name "makefile" | xargs sed -i 's/i386-elf-/i686-elf-/g' || true
+          # Verify the symlinks are working
+          ls -la /usr/local/bin/i386-elf-*
+          which i386-elf-gcc || echo "i386-elf-gcc not found in path"
 
       - name: Build MinimalOS
         run: |
-          make || true
-
-          # Create USB image
-          dd if=/dev/zero of=minimalos.img bs=1M count=10
-          mkfs.fat -F12 minimalos.img
-
-          # If os-image.bin exists, write it to the image
-          if [ -f os-image.bin ]; then
-            dd if=os-image.bin of=minimalos.img conv=notrunc
-          elif [ -f boot_sect.bin ]; then
-            # Fallback to just writing the boot sector
-            dd if=boot_sect.bin of=minimalos.img conv=notrunc bs=512 count=1
-          fi
+          # Display environment for debugging
+          echo "PATH=$PATH"
+          make
+          make usb
 
       - name: Upload OS image
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@65462800fd760344b1a7b4382951275a0abb4808 # v4
         with:
           name: minimalos-image
           path: minimalos.img
